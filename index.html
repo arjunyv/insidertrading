@@ -439,28 +439,68 @@ const MCAP_BANDS = [
 function parseCSV(text) {
   // Strip BOM
   text = text.replace(/^\uFEFF/, '');
+
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
 
   function parseLine(line) {
     const cells = [];
-    let cur = '', inQ = false;
+    let cur = '';
+    let inQ = false;
+
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
+
       if (ch === '"') {
-        if (inQ && line[i+1] === '"') { cur += '"'; i++; }
-        else inQ = !inQ;
+        if (inQ && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQ = !inQ;
+        }
       } else if (ch === ',' && !inQ) {
-        cells.push(cur); cur = '';
+        cells.push(cur);
+        cur = '';
       } else {
         cur += ch;
       }
     }
+
     cells.push(cur);
     return cells;
   }
 
-  const headers = parseLine(lines[0]).map(h => h.trim());
+  // Clean header names
+  const headers = parseLine(lines[0]).map(h =>
+    h
+      .replace(/\r?\n/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const vals = parseLine(lines[i]);
+    if (vals.length < 2) continue;
+
+    const obj = {};
+    headers.forEach((h, j) => {
+      obj[h] = (vals[j] || '').trim();
+    });
+
+    rows.push(obj);
+  }
+
+  return rows;
+}
+
+  const headers = parseLine(lines[0]).map(h =>
+  h
+    .replace(/\r?\n/g, '')   // Remove line breaks
+    .replace(/\s+/g, ' ')    // Collapse multiple spaces
+    .trim()                  // Remove leading/trailing spaces
+);
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const vals = parseLine(lines[i]);
@@ -489,9 +529,9 @@ function parseInsiderCSV(rows) {
       .toUpperCase()
       .trim(),
 
-    company:      r.company || r['Company Name'] || '',
-    category:     r.category || r['Category of Person'] || '',
-    sec_type:     r.sec_type || r['Type of Securities'] || 'Equity Shares',
+    company: r.company || r.COMPANY || r['Company Name'] || '',
+    category: r.category || r['CATEGORY OF PERSON'] || '',
+    sec_type: r.sec_type || r['TYPE OF SECURITY (ACQUIRED/DISPLOSED)'] || 'Equity Shares',
     month:        r.month || '',
     month_label:  r.month_label || r.month || '',
     buy_price:    num(r.buy_price),
