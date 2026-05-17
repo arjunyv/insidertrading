@@ -478,14 +478,22 @@ function parseCSV(text) {
    buy_price, buy_cr, sell_cr, pledge_cr, stake_before, stake_after, stake_change
    ═══════════════════════════════════════════════════════════════════════ */
 function parseInsiderCSV(rows) {
-  const num = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+  const num = v => {
+    const n = parseFloat(v);
+    return isNaN(n) ? null : n;
+  };
 
   return rows.map(r => ({
-    company:      r.company      || r['Company Name'] || '',
-    category:     r.category     || r['Category of Person'] || '',
-    sec_type:     r.sec_type     || r['Type of Securities'] || 'Equity Shares',
-    month:        r.month        || '',
-    month_label:  r.month_label  || r.month || '',
+    // Join key from insider_data.csv
+    symbol: (r.SYMBOL || r.Symbol || r.symbol || '')
+      .toUpperCase()
+      .trim(),
+
+    company:      r.company || r['Company Name'] || '',
+    category:     r.category || r['Category of Person'] || '',
+    sec_type:     r.sec_type || r['Type of Securities'] || 'Equity Shares',
+    month:        r.month || '',
+    month_label:  r.month_label || r.month || '',
     buy_price:    num(r.buy_price),
     buy_cr:       num(r.buy_cr),
     sell_cr:      num(r.sell_cr),
@@ -493,7 +501,9 @@ function parseInsiderCSV(rows) {
     stake_before: num(r.stake_before),
     stake_after:  num(r.stake_after),
     stake_change: num(r.stake_change),
-    mcap: null,  // filled in after mcap lookup
+
+    // Filled later using SYMBOL ↔ NSE Code join
+    mcap: null
   })).filter(r => r.company);
 }
 
@@ -502,49 +512,58 @@ function parseInsiderCSV(rows) {
    Expected columns: Name, NSE Code, Market Capitalization
    ═══════════════════════════════════════════════════════════════════════ */
 function buildMcapLookup(rows) {
-  const byName = new Map();
-  const byNse  = new Map();
+  const byNse = new Map();
   let total = 0;
 
   rows.forEach(r => {
-    const mcapStr = r['Market Capitalization'] || r['MarketCap'] || r['market_cap'] || '';
-    const mcap = parseFloat(mcapStr);
+    const mcapStr =
+      r['Market Capitalization'] ||
+      r['MarketCap'] ||
+      r['market_cap'] ||
+      '';
+
+    // Remove commas before converting to number
+    const mcap = parseFloat(
+      String(mcapStr).replace(/,/g, '').trim()
+    );
+
     if (isNaN(mcap)) return;
+
+    // Join key from companies-by-market-cap.csv
+    const nseCode = (
+      r['NSE Code'] ||
+      r['NSECode'] ||
+      r['Symbol'] ||
+      ''
+    ).toUpperCase().trim();
+
+    if (!nseCode) return;
+
+    byNse.set(nseCode, mcap);
     total++;
-
-    const name = (r['Name'] || '').toLowerCase().trim();
-    const nse  = (r['NSE Code'] || r['NSECode'] || '').toUpperCase().trim();
-
-    if (name) byName.set(name, mcap);
-    if (nse)  byNse.set(nse, mcap);
   });
 
-  return { byName, byNse, total };
+  return {
+    byNse,
+    total
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
    MCAP ENRICHMENT — fuzzy name matching
    ═══════════════════════════════════════════════════════════════════════ */
 function enrichWithMcap(rawArr, lookup) {
-  const { byName } = lookup;
+  const { byNse } = lookup;
   let matched = 0;
 
   rawArr.forEach(r => {
-    const nameLower = r.company.toLowerCase();
-    // Exact match
-    if (byName.has(nameLower)) { r.mcap = byName.get(nameLower); matched++; return; }
-    // Strip "Limited" / "Ltd" variants
-    const stripped = nameLower
-      .replace(/\blimited\b\.?/gi, '').replace(/\bltd\.?\b/gi, '')
-      .replace(/\s+/g, ' ').trim();
-    if (byName.has(stripped)) { r.mcap = byName.get(stripped); matched++; return; }
-    // Partial prefix match (min 6 chars)
-    if (stripped.length >= 6) {
-      for (const [k, v] of byName) {
-        if (k.startsWith(stripped) || stripped.startsWith(k.replace(/\blimited\b\.?/gi,'').trim())) {
-          r.mcap = v; matched++; return;
-        }
-      }
+    if (!r.symbol) return;
+
+    const symbol = r.symbol.toUpperCase().trim();
+
+    if (byNse.has(symbol)) {
+      r.mcap = byNse.get(symbol);
+      matched++;
     }
   });
 
